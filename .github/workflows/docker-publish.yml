@@ -1,0 +1,80 @@
+name: Publish Docker Image
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'n*'
+  workflow_dispatch:
+    inputs:
+      ffmpeg_version:
+        description: 'FFmpeg version to build'
+        required: false
+        default: 'n7.0.2'
+
+env:
+  REGISTRY: docker.io
+  DOCKER_USER: ${{ secrets.DOCKER_USER }}
+  DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+  CONTAINER_NAME: ffmpeg-stream-recorder
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract metadata
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            FFMPEG_VERSION="${{ github.event.inputs.ffmpeg_version }}"
+          else
+            FFMPEG_VERSION="${{ github.ref_name }}"
+          fi
+          echo "ffmpeg_version=${FFMPEG_VERSION}" >> $GITHUB_OUTPUT
+          echo "date=$(date -u +'%Y%m%d')" >> $GITHUB_OUTPUT
+          echo "short_sha=${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKER_USER }}
+          password: ${{ env.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            FFMPEG_VERSION=${{ steps.meta.outputs.ffmpeg_version }}
+          tags: |
+            ${{ env.DOCKER_USER }}/${{ env.CONTAINER_NAME }}:latest
+            ${{ env.DOCKER_USER }}/${{ env.CONTAINER_NAME }}:${{ steps.meta.outputs.ffmpeg_version }}
+            ${{ env.DOCKER_USER }}/${{ env.CONTAINER_NAME }}:${{ steps.meta.outputs.date }}-${{ steps.meta.outputs.short_sha }}
+          labels: |
+            org.opencontainers.image.title=FFmpeg Stream Recorder
+            org.opencontainers.image.description=FFmpeg streaming segmentation container
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.ffmpeg_version }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Image digest
+        run: echo "Image pushed successfully! "
